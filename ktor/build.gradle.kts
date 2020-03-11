@@ -9,6 +9,10 @@ buildscript {
     }
 }
 
+application {
+    mainClassName = "io.github.cfstout.kacoon.KacoonKtorServer.kt"
+}
+
 val deps: Map<String, String> by extra
 
 dependencies {
@@ -20,6 +24,8 @@ dependencies {
     implementation("io.ktor:ktor-server-netty:${deps["ktor"]}")
     implementation("io.ktor:ktor-jackson:${deps["ktor"]}")
 
+    // todo
+     implementation("com.wix.greyhound:greyhound-core_2.12:0.1.0-SNAPSHOT")
 }
 
 tasks {

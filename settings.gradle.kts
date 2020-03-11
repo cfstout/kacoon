@@ -1,6 +1,7 @@
 rootProject.name = "kacoon"
 
 listOf(
+    "kafka",
     "ktor",
     "util"
 ).forEach {

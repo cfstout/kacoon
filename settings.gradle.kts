@@ -3,6 +3,7 @@ rootProject.name = "kacoon"
 listOf(
     "kafka",
     "ktor",
+    "repair",
     "util"
 ).forEach {
     include(":$it")

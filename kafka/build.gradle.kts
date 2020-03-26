@@ -7,6 +7,8 @@ buildscript {
 val deps: Map<String, String> by extra
 
 dependencies {
+    implementation(project(":util"))
+
     implementation("com.fasterxml.jackson.core:jackson-databind:${deps["jackson"]}")
     implementation("com.google.guava:guava:${deps["guava"]}")
     implementation("org.apache.kafka:kafka-clients:${deps["kafka"]}")

@@ -12,4 +12,5 @@ dependencies {
     implementation("com.fasterxml.jackson.datatype:jackson-datatype-jdk8:${deps["jackson"]}")
     implementation("com.fasterxml.jackson.module:jackson-module-kotlin:${deps["jackson"]}")
     implementation("com.google.inject:guice:${deps["guice"]}")
+    implementation("org.apache.kafka:kafka-clients:${deps["kafka"]}")
 }

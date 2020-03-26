@@ -7,6 +7,7 @@ import com.google.common.reflect.TypeToken
 import io.github.cfstout.kafka.config.stdConsumerConfig
 import io.github.cfstout.kafka.consumer.config.ConsumerGroupConfig
 import io.github.cfstout.kafka.serializers.JacksonDeserializer
+import kotlinx.coroutines.flow.flow
 import org.apache.kafka.clients.consumer.ConsumerRecord
 import org.apache.kafka.clients.consumer.KafkaConsumer
 import org.apache.kafka.common.errors.WakeupException
@@ -18,34 +19,67 @@ import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
 
-class AsyncConsumer<T> private constructor(private val deserializer: Deserializer<T>,
-                                           brokers: List<String>,
-                                           private val config: ConsumerGroupConfig,
-                                           private val consume: suspend (T) -> Unit) : Runnable, AutoCloseable {
+class AsyncConsumer<T> private constructor(
+    brokers: List<String>,
+    private val config: ConsumerGroupConfig,
+    private val rawConsumer: KafkaConsumer<ByteArray, ByteArray>,
+    private val actors: List<ConsumerLoopActor<ByteArray, ByteArray>>,
+    private val consume: suspend (T) -> Unit
+) : Runnable, AutoCloseable {
     companion object {
         private val logger: Logger = LoggerFactory.getLogger(AsyncConsumer::class.java)
         private val keyDeserializer = StringDeserializer()
         val GROUP_TAG = "consumer_group"
 
-        fun <T> forJson(objectReader: ObjectReader,
-                        typeToken: TypeToken<T>,
-                        brokers: List<String>,
-                        config: ConsumerGroupConfig,
-                        consume: suspend (T) -> Unit): AsyncConsumer<T> {
+        fun <T> unorderedAsyncJsonConsumer(
+            objectReader: ObjectReader,
+            typeToken: TypeToken<T>,
+            brokers: List<String>,
+            config: ConsumerGroupConfig,
+            consume: suspend (T) -> Unit
+        ): AsyncConsumer<T> {
+            val rawConsumer: KafkaConsumer<ByteArray, ByteArray> =
+                KafkaConsumer(stdConsumerConfig(brokers, config.groupName, config.overrides))
+            val offsetTracking = OffsetTracking()
+            val groupManagement = GroupManagement<ByteArray, ByteArray>(
+                config.pattern, config.groupName, config.commitOffsets, rawConsumer, offsetTracking
+            )
+            val flowController = ConsumerFlowController<ByteArray, ByteArray>(
+                config.groupName, config.consumerFlowConfig
+            ) { offsetTracking.backlogSizes() }
+            val deserializer = JacksonDeserializer(objectReader, typeToken)
+            val worker = UnorderedAsyncWorker<ByteArray, ByteArray>(offsetTracking)
+            { consume.invoke(deserialize(it, deserializer).value()) }
             return AsyncConsumer(
-                    JacksonDeserializer(objectReader, typeToken),
-                    brokers,
-                    config,
-                    consume)
+                brokers,
+                config,
+                rawConsumer,
+                listOf(groupManagement, flowController, worker),
+                consume
+            )
+        }
+
+        fun <T>
+
+        private fun <T> deserialize(record: ConsumerRecord<ByteArray, ByteArray>, deserializer: Deserializer<T>): ConsumerRecord<String, T> {
+            return ConsumerRecord(
+                record.topic(),
+                record.partition(),
+                record.offset(),
+                record.timestamp(),
+                record.timestampType(),
+                ConsumerRecord.NULL_CHECKSUM.toLong(),
+                ConsumerRecord.NULL_SIZE,
+                ConsumerRecord.NULL_SIZE,
+                keyDeserializer.deserialize(record.topic(), record.key()),
+                deserializer.deserialize(record.topic(), record.value())
+            )
         }
     }
 
-    private val rawConsumer: KafkaConsumer<ByteArray, ByteArray> =
-            KafkaConsumer(stdConsumerConfig(brokers, config.groupName, config.overrides))
     private val shutdown = AtomicBoolean()
     private val dead = AtomicBoolean()
     private val shutdownLatch = CountDownLatch(1)
-    private val offsetTracking = OffsetTracking()
 
     // todo metrics
 //    val tags = standardMetricTags(config.groupName)
@@ -53,18 +87,6 @@ class AsyncConsumer<T> private constructor(private val deserializer: Deserialize
 //    private val batchSize = metricFactory.histogram("kafka_consumer.batch_size", tags)
 //    private val consumed = metricFactory.meter("kafka_consumer.consumed", tags)
 //    private val deadGauge = metricFactory.registerGauge("kafka_consumer.dead", Gauge { if (isDead()) 1 else 0 }, tags)
-
-    // Actors
-    private val groupManagement = GroupManagement<ByteArray, ByteArray>(
-            config.pattern, config.groupName, config.commitOffsets, rawConsumer, offsetTracking
-    )
-    private val flowController = ConsumerFlowController<ByteArray, ByteArray>(
-        config.groupName, config.consumerFlowConfig) { offsetTracking.backlogSizes() }
-    private val worker = UnorderedAsyncWorker<ByteArray, ByteArray>(offsetTracking) { process(it) }
-
-    private val actors: List<ConsumerLoopActor<ByteArray, ByteArray>> = listOf(
-            groupManagement, flowController, worker
-    )
 
     override fun run() {
         Loop().use {
@@ -106,26 +128,6 @@ class AsyncConsumer<T> private constructor(private val deserializer: Deserialize
         if (!clean) {
             logger.error("Consumer {} not shutdown after 2 seconds.", config)
         }
-    }
-
-    private suspend fun process(record: ConsumerRecord<ByteArray, ByteArray>) {
-        // todo wrap in a try and write failure to a consumer group specific failure topic
-        consume.invoke(deserialize(record).value())
-    }
-
-    private fun deserialize(record: ConsumerRecord<ByteArray, ByteArray>): ConsumerRecord<String, T> {
-        return ConsumerRecord(
-                record.topic(),
-                record.partition(),
-                record.offset(),
-                record.timestamp(),
-                record.timestampType(),
-                ConsumerRecord.NULL_CHECKSUM.toLong(),
-                ConsumerRecord.NULL_SIZE,
-                ConsumerRecord.NULL_SIZE,
-                keyDeserializer.deserialize(record.topic(), record.key()),
-                deserializer.deserialize(record.topic(), record.value())
-        )
     }
 
     // Wrapper for all our polling loop logic to allow things to be managed consistently

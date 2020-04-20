@@ -21,10 +21,6 @@ subprojects {
 
     repositories {
         jcenter()
-        mavenLocal()
-        maven {
-            url = uri("https://plugins.gradle.org/m2/")
-        }
     }
 
     val deps by extra {
@@ -37,7 +33,7 @@ subprojects {
             "kafka" to "2.2.1",
             "kotlinx" to "1.3.4",
             "ktor" to "1.3.1",
-            "logback-classic" to "1.2.3"
+            "logback" to "1.2.3"
         )
     }
 

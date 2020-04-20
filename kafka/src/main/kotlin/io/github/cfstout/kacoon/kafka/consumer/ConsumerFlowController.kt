@@ -40,6 +40,11 @@ class ConsumerFlowController<K, V>(
     }
 
     @VisibleForTesting
+    internal fun markLastResumed(partition: TopicPartition) {
+        lastResume[partition] = Instant.now()
+    }
+
+    @VisibleForTesting
     internal fun computeState(currentAssignments: Set<TopicPartition>,
                               currentlyPaused: Set<TopicPartition>): FlowState {
         val now = Instant.now()
